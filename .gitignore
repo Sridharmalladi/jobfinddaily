@@ -1,0 +1,22 @@
+# Environment — never commit real keys
+.env
+
+# Database — contains personal job history and cached data
+db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
