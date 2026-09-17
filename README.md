@@ -1,139 +1,134 @@
 # jobfinddaily
 
-A local MCP (Model Context Protocol) server that runs alongside Claude Desktop to discover, filter, score, and surface high-quality remote AI/ML engineering jobs at startups — optimized for junior engineers and STEM OPT candidates.
+Finds remote AI/ML jobs at startups, filters out the ones you can't get, and tracks the ones you apply to.
 
-Built with Python, FastMCP, SQLite, and async HTTP. Zero LLM calls in the data pipeline — all filtering and scoring is deterministic regex.
+Runs as a local MCP server. Your assistant calls it, you talk to your assistant in plain English.
+
+Built for junior engineers and STEM OPT candidates, so it aggressively drops senior roles, enterprise consulting, and anything that says no visa sponsorship.
 
 ---
 
-## Architecture
+## What a day looks like
 
 ```
-Claude Desktop
-     │
-     │  MCP protocol (stdio)
-     ▼
-mcp_server.py          ← FastMCP server, exposes 6 tools
-     │
-     ├── tools/jobs.py         ← source fetching, scraping, aggregation
-     ├── tools/filtering.py    ← deterministic job filtering (regex only)
-     ├── tools/scoring.py      ← rule-based additive scoring system
-     ├── tools/contacts.py     ← hiring contact discovery via Tavily
-     └── tools/storage.py      ← SQLite: 24h/7d caching + job persistence
+You:  find me jobs
+      → 30 roles, scored, best first, already filtered
+
+You:  tell me about the top one
+      → required skills, their AI stack, what they actually want
+
+You:  who do I talk to there
+      → founders, CTOs, recruiters, with LinkedIn links
+
+You:  I applied to it
+      → tracked
+
+You:  what's my pipeline
+      → 12 open, 3 gone quiet, here's who to chase
 ```
-
-The MCP server runs as a child process of Claude Desktop. Claude calls tools over stdio using the MCP protocol. All data work happens in the server — the LLM only handles reasoning and presentation.
-
----
-
-## Tools Exposed to Claude
-
-| Tool | Description |
-|---|---|
-| `discover_jobs` | Fetches from HN Hiring, RemoteOK, and Tavily. Pre-filters and pre-scores. Returns up to 30 jobs sorted by score. Results cached 24h. |
-| `extract_company_requirements` | Scrapes a job URL and extracts required skills, AI stack, experience level, culture signals. |
-| `find_hiring_people` | Searches LinkedIn (via Tavily) for founders, CTOs, and recruiters at a company. Returns verified contacts with name, role, and LinkedIn URL. |
-| `job_report` | Full enriched report for top N jobs: requirements + hiring contacts combined. |
-| `score_jobs` | Scores and ranks a custom list of job dicts. |
-| `save_jobs` / `get_saved_jobs` | Persist and retrieve jobs from local SQLite for deduplication across sessions. |
-
----
-
-## Data Sources
-
-- **HN Algolia API** (free, no key) — searches the monthly "Who is Hiring?" thread for AI/ML comments
-- **RemoteOK API** (free, no key) — remote tech jobs filtered client-side by keyword regex
-- **Tavily Search API** (1,000 free credits/month) — ATS platform searches (Ashby, Lever, Greenhouse)
-- **Firecrawl API** (optional) — clean markdown extraction from job pages; falls back to httpx + BeautifulSoup4
-
----
-
-## Filtering System
-
-All filtering in `tools/filtering.py` is deterministic regex — no LLM, no API calls.
-
-Pipeline (in order):
-1. **REJECT_TITLE** — blocks senior/staff/lead/director titles
-2. **NON_TECH_ROLE** — blocks sales, ops, legal, finance, marketing
-3. **TECH_TITLE** — requires engineer/scientist/researcher/intern/ML/AI/LLM in the title
-4. **Strong tech signal count** — requires ≥1 match from a list of ~70 specific terms (fine-tuning, LoRA, RAG, LangChain, vLLM, CUDA, etc.)
-5. **ENTERPRISE_SIGNAL** — rejects Deloitte, Accenture, McKinsey, Big 4
-6. **Experience years** — rejects if max stated requirement ≥ 3 years
-
----
-
-## Scoring System
-
-Additive rule-based scoring in `tools/scoring.py`. Every job that passes filtering gets a numeric score.
-
-| Signal | Points |
-|---|---|
-| Strong LLM/RAG/agent signal | +20 |
-| AI Engineer title (application layer) | +12 |
-| Startup / small-team signal | +20 |
-| Remote | +15 |
-| Junior / entry-level / internship | +15 |
-| Visa / OPT sponsorship offered | +15 |
-| Contract / short-term role | +12 |
-| AI-focused company | +10 |
-| Builder culture | +10 |
-| US-based or US remote | +10 |
-| Fresh listing (≤7 days) | +8 |
-| **No visa sponsorship** | **-30** |
-| Non-US only | -20 |
-| Stale listing (>60d) | -20 |
-| Very stale listing (>90d) | -40 |
-| Senior/staff/lead title | -25 |
-| Enterprise/consulting | -20 |
-
----
-
-## Caching
-
-SQLite database at `db/jobs.db` with a key-value cache table:
-- Job search results: **24-hour TTL**
-- Contact lookups: **7-day TTL**
-
-Cache keys are MD5 hashes of the query/URL. Expiry enforced at read time.
 
 ---
 
 ## Setup
 
-**Requirements:** Python 3.11+
+You need Python 3.11+ and a free [Tavily](https://tavily.com) key (1,000 searches/month, no card).
 
 ```bash
 git clone https://github.com/Sridharmalladi/jobfinddaily.git
 cd jobfinddaily
 pip install -r requirements.txt
-cp .env.example .env
-# add your Tavily API key to .env
+cp .env.example .env        # put your Tavily key in it
 ```
 
-**Configure Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Point your MCP client at it. For Claude Desktop that's `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "jobfinddaily": {
       "command": "python",
-      "args": ["/path/to/jobfinddaily/mcp_server.py"]
+      "args": ["/full/path/to/jobfinddaily/mcp_server.py"]
     }
   }
 }
 ```
 
-Then restart Claude Desktop. The tools will appear automatically.
-
-**Get a Tavily API key:** [tavily.com](https://tavily.com) — 1,000 free credits/month, no credit card required.
+Restart the app. Tools show up on their own.
 
 ---
 
-## Stack
+## The tools
 
-- Python 3.11
-- [FastMCP](https://github.com/jlowin/fastmcp) — MCP server framework
-- httpx — async HTTP
-- BeautifulSoup4 — HTML scraping fallback
-- sqlite3 (stdlib) — caching and job persistence
-- python-dotenv — environment variable loading
+**Finding work**
+
+| | |
+|---|---|
+| `discover_jobs` | Pulls from HN "Who is Hiring", RemoteOK, and startup ATS boards. Filters and scores before returning. Top 30, cached 24h. |
+| `extract_company_requirements` | Reads a job page and pulls out skills, AI stack, experience level, culture. |
+| `find_hiring_people` | Founders, CTOs, recruiters at a company, with LinkedIn links. Only returns people with a confirmed role — never guesses. |
+| `job_report` | Top N jobs with requirements and contacts already attached. |
+
+**Tracking what you did about it**
+
+| | |
+|---|---|
+| `track_application` | Move a job through `interested → applied → screening → interviewing → offer`, or `rejected` / `ghosted`. Keyed on the job URL, so it updates instead of duplicating. |
+| `application_pipeline` | Everything open, your response rate, and which applications have gone quiet past their stage's threshold — each with a suggested next move. |
+| `untrack_application` | Drop one. |
+
+**Housekeeping**
+
+`save_jobs` · `get_saved_jobs` · `score_jobs` — persist to local SQLite, re-rank a custom list.
+
+---
+
+## How jobs get picked
+
+No LLM in the pipeline. All regex, all deterministic, so it costs nothing and behaves the same every run.
+
+**Thrown out:** senior/staff/lead/director titles · sales, ops, legal, finance, marketing · Deloitte, Accenture, McKinsey, Big 4 · anything asking 3+ years · anything with no real AI/ML signal in the text.
+
+**Scored up:** LLM/RAG/agent work `+20` · startup signals `+20` · remote `+15` · junior-friendly `+15` · visa sponsorship `+15` · fresh listing `+8`
+
+**Scored down:** no sponsorship `-30` · stale 90+ days `-40` · senior title `-25` · non-US only `-20`
+
+Highest score first. Everything is additive and lives in `tools/scoring.py` if you want different weights.
+
+---
+
+## Follow-up rules
+
+`application_pipeline` flags anything sitting too long:
+
+| Stage | Nudges after |
+|---|---|
+| interested | 3 days |
+| applied | 7 days |
+| screening | 5 days |
+| interviewing | 5 days |
+
+Closed stages are never chased. Change the numbers in `tools/pipeline.py`.
+
+---
+
+## Where things live
+
+```
+mcp_server.py       the 10 tools
+tools/jobs.py       fetching and scraping
+tools/filtering.py  what gets thrown out
+tools/scoring.py    what gets ranked up
+tools/contacts.py   finding hiring people
+tools/pipeline.py   application tracking
+tools/storage.py    SQLite, caching, persistence
+```
+
+Your database sits at `db/jobs.db` and is gitignored. Job searches cache for 24h, contact lookups for 7 days.
+
+---
+
+## Notes
+
+- Firecrawl is optional. Without a key it scrapes with httpx + BeautifulSoup, which is fine for most job pages.
+- `mcp` is pinned below 2.0 — v2 renamed `FastMCP` and this runs on the v1 API.
+- Nothing leaves your machine except the API calls to Tavily and the job boards.
