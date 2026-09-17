@@ -38,6 +38,18 @@ def init_db() -> None:
                 value      TEXT NOT NULL,
                 expires_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS applications (
+                url             TEXT PRIMARY KEY,
+                company         TEXT NOT NULL,
+                title           TEXT NOT NULL,
+                status          TEXT NOT NULL,
+                notes           TEXT DEFAULT '',
+                contact_reached INTEGER DEFAULT 0,
+                created_at      INTEGER DEFAULT (strftime('%s','now')),
+                updated_at      INTEGER DEFAULT (strftime('%s','now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_app_status ON applications(status);
         """)
 
 
@@ -102,3 +114,70 @@ def get_saved_company_titles() -> set[tuple[str, str]]:
     with _conn() as conn:
         rows = conn.execute("SELECT company, title FROM jobs").fetchall()
     return {(r["company"].lower(), r["title"].lower()) for r in rows}
+
+
+def upsert_application(
+    url: str,
+    company: str,
+    title: str,
+    status: str,
+    notes: str = "",
+    contact_reached: bool | None = None,
+) -> dict:
+    """Insert or update one application. Blank company/title/notes keep old values."""
+    now = int(time.time())
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM applications WHERE url = ?", (url,)
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """INSERT INTO applications
+                   (url, company, title, status, notes, contact_reached,
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (url, company, title, status, notes,
+                 int(bool(contact_reached)), now, now),
+            )
+            return {"url": url, "status": status, "created": True}
+
+        conn.execute(
+            """UPDATE applications
+               SET company = ?, title = ?, status = ?, notes = ?,
+                   contact_reached = ?, updated_at = ?
+               WHERE url = ?""",
+            (
+                company or row["company"],
+                title or row["title"],
+                status,
+                notes or row["notes"],
+                int(bool(contact_reached)) if contact_reached is not None
+                else row["contact_reached"],
+                now,
+                url,
+            ),
+        )
+        return {
+            "url": url,
+            "status": status,
+            "created": False,
+            "previous_status": row["status"],
+        }
+
+
+def get_applications(status: str = "", limit: int = 200) -> list[dict]:
+    sql = "SELECT * FROM applications"
+    args: tuple = ()
+    if status:
+        sql += " WHERE status = ?"
+        args = (status,)
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    with _conn() as conn:
+        rows = conn.execute(sql, (*args, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_application(url: str) -> bool:
+    with _conn() as conn:
+        conn.execute("DELETE FROM applications WHERE url = ?", (url,))
+        return conn.execute("SELECT changes()").fetchone()[0] > 0

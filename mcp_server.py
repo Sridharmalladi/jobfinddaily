@@ -22,6 +22,8 @@ mcp = FastMCP(
         "Use find_hiring_people(company) to locate founders/CTOs/recruiters. "
         "Use score_jobs to re-rank a custom list. "
         "Call save_jobs to persist results and get_saved_jobs to review history. "
+        "Use track_application to record what you did about a job, and "
+        "application_pipeline to see open applications and which have gone quiet. "
         "Web search powered by Tavily. Requires TAVILY_API_KEY in .env."
     ),
 )
@@ -158,6 +160,48 @@ def get_saved_jobs(limit: int = 50) -> list[dict]:
     """
     from tools.storage import get_saved_jobs as _run
     return _run(limit)
+
+
+@mcp.tool()
+def track_application(
+    url: str,
+    status: str,
+    company: str = "",
+    title: str = "",
+    notes: str = "",
+    contact_reached: bool | None = None,
+) -> dict:
+    """
+    Record or advance one application. The job URL is the key, so calling this
+    again with a new status moves the same row forward instead of duplicating.
+    status: interested | applied | screening | interviewing | offer | rejected | ghosted
+    Set contact_reached=True once you have messaged a founder/recruiter from
+    find_hiring_people. Blank company/title/notes leave existing values alone.
+    """
+    from tools.pipeline import track
+    return track(url, status, company, title, notes, contact_reached)
+
+
+@mcp.tool()
+def application_pipeline(status: str = "", include_closed: bool = False) -> dict:
+    """
+    Current state of every tracked application.
+    Returns totals, counts per stage, response rate, the open applications,
+    and follow_ups_due — roles that have gone quiet past their stage's
+    threshold (interested 3d, applied 7d, screening 5d, interviewing 5d),
+    each with a suggested next action.
+    Pass status to filter to one stage, include_closed=True to keep
+    rejected/ghosted rows in the listing.
+    """
+    from tools.pipeline import view
+    return view(status, include_closed)
+
+
+@mcp.tool()
+def untrack_application(url: str) -> dict:
+    """Remove an application from the pipeline by its job URL."""
+    from tools.pipeline import drop
+    return drop(url)
 
 
 if __name__ == "__main__":
